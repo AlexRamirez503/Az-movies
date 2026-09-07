@@ -2,6 +2,7 @@ name = "az-movies"
 main = "worker.js"
 compatibility_date = "2026-09-07"
 keep_vars = true
+# Player UI: servidor + formato + MP4/HLS
 
 [secrets]
 required = ["TMDB_API_KEY"]
