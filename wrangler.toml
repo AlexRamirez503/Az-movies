@@ -5,4 +5,4 @@ keep_vars = true
 # La interfaz sigue en worker.js; router-v2.js corrige NSR y mantiene todos los servidores.
 
 [secrets]
-required = ["TMDB_API_KEY"]
+required = ["TMDB_API_KEY", "NSR_API_TOKEN"]
