@@ -1,8 +1,8 @@
 name = "az-movies"
-main = "router-v4.js"
+main = "router-v5.js"
 compatibility_date = "2026-09-07"
 keep_vars = true
-# TMDB en worker.js. NSR directo en router-v4.js con fallback de autenticación limitado.
+# TMDB en worker.js. NSR directo en router-v5.js usando el origen real de AZ Movies.
 # NSR_API_TOKEN debe configurarse como secreto en Cloudflare.
 
 [secrets]
