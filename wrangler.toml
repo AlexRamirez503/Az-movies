@@ -1,8 +1,9 @@
 name = "az-movies"
-main = "router-v3.js"
+main = "router-v2.js"
 compatibility_date = "2026-09-07"
 keep_vars = true
-# La interfaz sigue en worker.js. router-v3.js adapta la respuesta del bridge NSR al reproductor.
+# Flujo correcto: TMDB en worker.js y NSR directo en router-v2.js.
+# NSR_API_TOKEN debe configurarse como secreto en Cloudflare; no se guarda en GitHub.
 
 [secrets]
-required = ["TMDB_API_KEY"]
+required = ["TMDB_API_KEY", "NSR_API_TOKEN"]
