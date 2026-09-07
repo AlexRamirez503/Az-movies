@@ -1,3 +1,5 @@
+const DEFAULT_NSR_BASE = 'https://nsrplay.space';
+
 const APP_HTML = `<!doctype html>
 <html lang="es">
 <head>
@@ -26,7 +28,7 @@ const APP_HTML = `<!doctype html>
 (function(){
 var P500='https://image.tmdb.org/t/p/w500';
 var PORIG='https://image.tmdb.org/t/p/original';
-var type='movie',page=1,items=[],hero=null,selected=null,busy=false,playback=null;
+var type='movie',page=1,items=[],hero=null,selected=null,busy=false,playback=null,hlsInstance=null,hlsLoader=null;
 function el(id){return document.getElementById(id)}
 var grid=el('grid');
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]})}
@@ -63,28 +65,42 @@ function setHero(x){
 function openDetails(x){
   selected=x;el('modalTitle').textContent=x.title||x.name||'Sin título';var d=x.release_date||x.first_air_date||'';el('modalYear').textContent=d?d.slice(0,4):'';el('modalRating').textContent='★ '+Number(x.vote_average||0).toFixed(1);el('modalType').textContent=type==='movie'?'Película':'Serie';el('modalDesc').textContent=x.overview||'Sin descripción disponible.';el('modalHero').style.backgroundImage=x.backdrop_path?'url("'+PORIG+x.backdrop_path+'")':'none';el('detailModal').classList.add('show');
 }
-function destroyVideo(){var v=el('video');try{v.pause()}catch(e){}v.removeAttribute('src');v.load()}
+function destroyVideo(){var v=el('video');try{v.pause()}catch(e){}if(hlsInstance){try{hlsInstance.destroy()}catch(e){}hlsInstance=null}v.removeAttribute('src');v.load()}
 function closeModal(id){el(id).classList.remove('show');if(id==='playerModal')destroyVideo()}
 function note(msg,error){var n=el('playerNote');n.textContent=msg||'';n.className='player-note'+(error?' error':'')}
+async function requestPlayback(item,server){
+  var q='?action=playback&type='+encodeURIComponent(type)+'&id='+encodeURIComponent(String(item.id));
+  if(type==='tv')q+='&season=1&episode=1';
+  if(server)q+='&server='+encodeURIComponent(server);
+  var r=await fetch('/'+q,{cache:'no-store'});var data=await r.json();if(!r.ok)throw new Error(data.error||'No hay fuente disponible');return data;
+}
 async function openPlayer(item){
-  if(!item)return;selected=item;el('detailModal').classList.remove('show');el('playerModal').classList.add('show');el('playerTitle').textContent=item.title||item.name||'Reproductor';destroyVideo();note('Buscando fuente…',false);el('serverSelect').disabled=true;el('formatSelect').disabled=true;
-  try{
-    var q='?action=playback&type='+encodeURIComponent(type)+'&id='+encodeURIComponent(String(item.id));
-    if(type==='tv')q+='&season=1&episode=1';
-    var r=await fetch('/'+q,{cache:'no-store'});var data=await r.json();if(!r.ok)throw new Error(data.error||'No hay fuente disponible');playback=data;fillServers();
-  }catch(e){note(e&&e.message?e.message:'No hay fuente disponible',true)}
+  if(!item)return;selected=item;el('detailModal').classList.remove('show');el('playerModal').classList.add('show');el('playerTitle').textContent=item.title||item.name||'Reproductor';destroyVideo();note('Buscando servidores…',false);el('serverSelect').disabled=true;el('formatSelect').disabled=true;
+  try{playback=await requestPlayback(item,'');fillServers(playback);fillFormats(playback.streams||[])}catch(e){note(e&&e.message?e.message:'No hay fuente disponible',true)}
 }
-function fillServers(){
-  var servers=(playback&&Array.isArray(playback.servers))?playback.servers:[];var s=el('serverSelect');s.innerHTML='';if(!servers.length){note('No hay servidores disponibles para este contenido.',true);return}
-  for(var i=0;i<servers.length;i++){var o=document.createElement('option');o.value=String(i);o.textContent=servers[i].name||('Servidor '+(i+1));s.appendChild(o)}s.disabled=false;s.onchange=fillFormats;fillFormats();
+function fillServers(data){
+  var list=(data&&Array.isArray(data.servers))?data.servers:[];var s=el('serverSelect');s.innerHTML='';if(!list.length){s.disabled=true;note('No hay servidores disponibles para este contenido.',true);return}
+  for(var i=0;i<list.length;i++){var o=document.createElement('option');o.value=list[i].name||'';o.textContent=list[i].name||('Servidor '+(i+1));s.appendChild(o)}
+  if(data.server)s.value=data.server;s.disabled=false;s.onchange=changeServer;
 }
-function fillFormats(){
-  var si=Number(el('serverSelect').value||0);var streams=(playback&&playback.servers&&playback.servers[si]&&Array.isArray(playback.servers[si].streams))?playback.servers[si].streams:[];var f=el('formatSelect');f.innerHTML='';if(!streams.length){f.disabled=true;note('Ese servidor no tiene formatos disponibles.',true);return}
+async function changeServer(){
+  var name=el('serverSelect').value;if(!selected||!name)return;el('formatSelect').disabled=true;note('Cambiando servidor…',false);destroyVideo();
+  try{playback=await requestPlayback(selected,name);fillFormats(playback.streams||[])}catch(e){fillFormats([]);note(e&&e.message?e.message:'Ese servidor no está disponible',true)}
+}
+function fillFormats(streams){
+  var f=el('formatSelect');f.innerHTML='';if(!Array.isArray(streams)||!streams.length){f.disabled=true;note('Ese servidor no tiene formatos disponibles.',true);return}
   for(var i=0;i<streams.length;i++){var o=document.createElement('option');o.value=String(i);o.textContent=streams[i].label||String(streams[i].format||'Video').toUpperCase();f.appendChild(o)}f.disabled=false;f.onchange=playSelected;playSelected();
 }
-function playSelected(){
-  var si=Number(el('serverSelect').value||0),fi=Number(el('formatSelect').value||0);var st=playback&&playback.servers&&playback.servers[si]&&playback.servers[si].streams?playback.servers[si].streams[fi]:null;if(!st||!st.url){note('La fuente seleccionada no es válida.',true);return}
-  destroyVideo();var v=el('video');note('Cargando video…',false);v.src=st.url;v.addEventListener('loadedmetadata',function(){note('',false);v.play().catch(function(){})},{once:true});v.addEventListener('error',function(){note('No se pudo reproducir esta fuente. Prueba otro servidor o formato.',true)},{once:true});v.load();
+function loadHlsJs(){
+  if(window.Hls)return Promise.resolve(window.Hls);if(hlsLoader)return hlsLoader;
+  hlsLoader=new Promise(function(resolve,reject){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';s.async=true;s.onload=function(){window.Hls?resolve(window.Hls):reject(new Error('HLS no disponible'))};s.onerror=function(){reject(new Error('No se pudo cargar soporte HLS'))};document.head.appendChild(s)});return hlsLoader;
+}
+async function playSelected(){
+  var fi=Number(el('formatSelect').value||0);var st=playback&&Array.isArray(playback.streams)?playback.streams[fi]:null;if(!st||!st.url){note('La fuente seleccionada no es válida.',true);return}
+  destroyVideo();var v=el('video');var isHls=st.format==='hls'||/\.m3u8(?:$|\?)/i.test(st.url);note('Cargando video…',false);
+  if(isHls&&v.canPlayType('application/vnd.apple.mpegurl')){v.src=st.url;v.addEventListener('loadedmetadata',function(){note('',false);v.play().catch(function(){})},{once:true});v.addEventListener('error',function(){note('No se pudo reproducir este HLS.',true)},{once:true});v.load();return}
+  if(isHls){try{var Hls=await loadHlsJs();if(Hls.isSupported()){hlsInstance=new Hls({enableWorker:true});hlsInstance.loadSource(st.url);hlsInstance.attachMedia(v);hlsInstance.on(Hls.Events.MANIFEST_PARSED,function(){note('',false);v.play().catch(function(){})});hlsInstance.on(Hls.Events.ERROR,function(e,d){if(d&&d.fatal)note('No se pudo reproducir este HLS.',true)});return}}catch(e){note(e.message||'No se pudo cargar HLS',true);return}}
+  v.src=st.url;v.addEventListener('loadedmetadata',function(){note('',false);v.play().catch(function(){})},{once:true});v.addEventListener('error',function(){note('No se pudo reproducir esta fuente. Prueba otro servidor o formato.',true)},{once:true});v.load();
 }
 function setType(t){type=t;el('movieTab').classList.toggle('active',t==='movie');el('tvTab').classList.toggle('active',t==='tv');el('sectionTitle').textContent=t==='movie'?'Películas populares':'Series populares';el('search').value='';load(true)}
 el('movieTab').onclick=function(){setType('movie')};el('tvTab').onclick=function(){setType('tv')};el('more').onclick=function(){page++;load(false)};el('search').oninput=function(e){var q=e.target.value.trim().toLowerCase();if(!q){render(items);return}var filtered=[];for(var i=0;i<items.length;i++){var text=((items[i].title||items[i].name||'')+' '+(items[i].overview||'')).toLowerCase();if(text.indexOf(q)!==-1)filtered.push(items[i])}render(filtered)};el('heroInfo').onclick=function(){if(hero)openDetails(hero)};el('heroPlay').onclick=function(){if(hero)openPlayer(hero)};el('modalPlay').onclick=function(){if(selected)openPlayer(selected)};
@@ -102,89 +118,346 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders() });
     const action = url.searchParams.get('action');
+
     if (!action) {
       return new Response(APP_HTML, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
     }
+
     if (action === 'health') {
-      let entries = 0;
-      try { entries = Object.keys(parsePlaybackMap(env.PLAYBACK_MAP_JSON)).length; } catch (e) {}
-      return json({ ok: true, tmdb_configured: Boolean(env.TMDB_API_KEY), playback_entries: entries });
+      return json({
+        ok: true,
+        tmdb_configured: Boolean(env.TMDB_API_KEY),
+        nsr_base: getNsrBase(env),
+        stream_proxy_ready: Boolean(env.STREAM_PROXY_SECRET || env.TMDB_API_KEY)
+      });
     }
+
     if (action === 'catalog') {
       if (!env.TMDB_API_KEY) return json({ error: 'Falta configurar TMDB_API_KEY en las variables del Worker.' }, 500);
-      const type = url.searchParams.get('type') === 'tv' ? 'tv' : 'movie';
+      const type = normalizeType(url.searchParams.get('type'));
       const page = clampInt(url.searchParams.get('page'), 1, 500, 1);
       try {
         const endpoint = 'https://api.themoviedb.org/3/' + type + '/popular?api_key=' + encodeURIComponent(env.TMDB_API_KEY) + '&language=es-MX&page=' + page;
         const tmdbRes = await fetch(endpoint, { headers: { Accept: 'application/json' } });
-        const data = await tmdbRes.json();
+        const data = await safeJson(tmdbRes);
         if (!tmdbRes.ok) return json({ error: 'TMDB respondió con un error.', details: data }, tmdbRes.status);
         return json(data, 200);
       } catch (err) {
         return json({ error: 'No se pudo conectar con TMDB.', details: err.message }, 500);
       }
     }
+
     if (action === 'playback') {
-      const type = url.searchParams.get('type') === 'tv' ? 'tv' : 'movie';
+      const type = normalizeType(url.searchParams.get('type'));
       const id = clampInt(url.searchParams.get('id'), 1, 999999999, 0);
       const season = clampInt(url.searchParams.get('season'), 1, 999, 1);
       const episode = clampInt(url.searchParams.get('episode'), 1, 9999, 1);
+      const selectedServer = (url.searchParams.get('server') || '').trim();
       if (!id) return json({ error: 'Falta un id válido.' }, 400);
-      let map;
-      try { map = parsePlaybackMap(env.PLAYBACK_MAP_JSON); } catch (e) { return json({ error: 'PLAYBACK_MAP_JSON no es JSON válido.' }, 500); }
-      const key = type === 'tv' ? 'tv:' + id + ':' + season + ':' + episode : 'movie:' + id;
-      const servers = normalizeServers(map[key]);
-      if (!servers.length) return json({ error: 'No hay una fuente configurada para este título.' }, 404);
-      return json({ success: true, servers: servers }, 200);
+      if (!(env.STREAM_PROXY_SECRET || env.TMDB_API_KEY)) return json({ error: 'Falta configurar STREAM_PROXY_SECRET o TMDB_API_KEY.' }, 500);
+
+      try {
+        const rawServers = await getNsrServers(type, id, season, episode, env);
+        if (!rawServers.length) return json({ error: 'Sin servidores disponibles en NSR Play.' }, 404);
+
+        let target = rawServers[0];
+        if (selectedServer) {
+          const found = rawServers.find(function(s) { return s.name.toLowerCase() === selectedServer.toLowerCase(); });
+          if (found) target = found;
+        }
+
+        const streams = await resolveNsrServer(target, env, url.origin);
+        if (!streams.length) return json({ error: 'El servidor seleccionado no devolvió una fuente reproducible.' }, 404);
+
+        return json({
+          success: true,
+          server: target.name,
+          servers: rawServers.map(function(s) { return { name: s.name }; }),
+          streams: streams
+        }, 200);
+      } catch (err) {
+        const status = err && err.status ? err.status : 500;
+        return json({ error: err && err.message ? err.message : 'Error consultando NSR Play.' }, status);
+      }
     }
+
+    if (action === 'stream') {
+      return proxyStream(request, url, env);
+    }
+
     return json({ error: 'Acción no reconocida.' }, 404);
   }
 };
+
+function normalizeType(value) {
+  return value === 'tv' ? 'tv' : 'movie';
+}
 
 function clampInt(value, min, max, fallback) {
   const n = parseInt(value || '', 10);
   return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
 }
-function parsePlaybackMap(raw) {
-  if (!raw) return {};
-  const data = JSON.parse(raw);
-  return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+
+function getNsrBase(env) {
+  const raw = (env.NSR_BASE_URL || DEFAULT_NSR_BASE).trim();
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return DEFAULT_NSR_BASE;
+    return u.origin;
+  } catch (_) {
+    return DEFAULT_NSR_BASE;
+  }
 }
-function normalizeServers(entry) {
-  const input = Array.isArray(entry) ? entry : (entry ? [entry] : []);
+
+function nsrHeaders(env) {
+  const base = getNsrBase(env);
+  return {
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36',
+    'Referer': base + '/',
+    'Origin': base,
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8'
+  };
+}
+
+async function getNsrServers(type, id, season, episode, env) {
+  const base = getNsrBase(env);
+  let path = '/api/v1/embed/sources/movie/' + encodeURIComponent(String(id)) + '?fast=true';
+  if (type === 'tv') {
+    path = '/api/v1/embed/sources/tv/' + encodeURIComponent(String(id)) + '/' + encodeURIComponent(String(season)) + '/' + encodeURIComponent(String(episode)) + '?fast=true';
+  }
+
+  const res = await fetch(base + path, { method: 'GET', headers: nsrHeaders(env), redirect: 'follow' });
+  const data = await safeJson(res);
+  if (!res.ok) throw httpError('NSR Play no devolvió servidores para este contenido.', res.status === 404 ? 404 : 502);
+
+  const list = Array.isArray(data && data.servers) ? data.servers : [];
   const out = [];
-  for (let i = 0; i < input.length; i++) {
-    const item = input[i];
-    if (typeof item === 'string') {
-      out.push({ name: 'Servidor ' + (i + 1), streams: [{ url: item, format: inferFormat(item), label: inferFormat(item).toUpperCase() }] });
-      continue;
-    }
-    if (!item || typeof item !== 'object') continue;
-    if (Array.isArray(item.streams)) {
-      const streams = normalizeStreams(item.streams);
-      if (streams.length) out.push({ name: String(item.name || ('Servidor ' + (i + 1))), streams: streams });
-      continue;
-    }
-    if (typeof item.url === 'string') {
-      const st = normalizeStream(item);
-      if (st) out.push({ name: String(item.name || ('Servidor ' + (i + 1))), streams: [st] });
-    }
+  const seen = new Set();
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i] || {};
+    const name = String(item.name || '').trim();
+    const token = String(item.token || '').trim();
+    if (!name || !token) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name: name, token: token });
   }
   return out;
 }
-function normalizeStreams(arr) {
-  const out = [];
-  for (let i = 0; i < arr.length; i++) {
-    const st = normalizeStream(arr[i]);
-    if (st) out.push(st);
+
+async function resolveNsrServer(server, env, origin) {
+  const base = getNsrBase(env);
+  const endpoint = new URL('/api/v1/embed/resolve', base);
+  endpoint.searchParams.set('server', server.name);
+  endpoint.searchParams.set('token', server.token);
+
+  const res = await fetch(endpoint.toString(), { method: 'GET', headers: nsrHeaders(env), redirect: 'follow' });
+  const data = await safeJson(res);
+  if (!res.ok) throw httpError('No se pudo resolver el servidor ' + server.name + '.', 502);
+
+  const info = data && data.data && typeof data.data === 'object' ? data.data : {};
+  const candidates = [];
+  if (typeof info.playUrl === 'string' && info.playUrl) candidates.push({ raw: info.playUrl, label: 'MP4 / Video', format: inferFormat(info.playUrl) });
+  if (typeof info.directUrl === 'string' && info.directUrl) candidates.push({ raw: info.directUrl, label: 'HLS / M3U8', format: inferFormat(info.directUrl) });
+  if (typeof info.url === 'string' && info.url) candidates.push({ raw: info.url, label: 'Video', format: inferFormat(info.url) });
+
+  const streams = [];
+  const seen = new Set();
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    if (!isSafeStreamUrl(c.raw) || seen.has(c.raw)) continue;
+    seen.add(c.raw);
+    streams.push({
+      format: c.format,
+      label: c.label,
+      url: await makeProxyUrl(c.raw, origin, env)
+    });
   }
+  return streams;
+}
+
+async function proxyStream(request, url, env) {
+  const target = url.searchParams.get('stream_url') || '';
+  const exp = parseInt(url.searchParams.get('exp') || '0', 10);
+  const sig = url.searchParams.get('sig') || '';
+  if (!target || !exp || !sig) return json({ error: 'Faltan parámetros del stream.' }, 400);
+  if (!isSafeStreamUrl(target)) return json({ error: 'URL de stream no válida.' }, 400);
+
+  const now = Math.floor(Date.now() / 1000);
+  if (exp < now || exp > now + 3600) return json({ error: 'El enlace del stream expiró.' }, 403);
+  const secret = String(env.STREAM_PROXY_SECRET || env.TMDB_API_KEY || '');
+  if (!secret) return json({ error: 'Proxy de stream no configurado.' }, 500);
+  const valid = await verifySignature(exp + '\n' + target, sig, secret);
+  if (!valid) return json({ error: 'Firma de stream inválida.' }, 403);
+
+  const headers = new Headers();
+  const base = getNsrBase(env);
+  headers.set('User-Agent', 'Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36');
+  headers.set('Referer', base + '/');
+  headers.set('Origin', base);
+  headers.set('Accept', request.headers.get('Accept') || '*/*');
+  if (request.headers.has('Range')) headers.set('Range', request.headers.get('Range'));
+  if (request.headers.has('If-None-Match')) headers.set('If-None-Match', request.headers.get('If-None-Match'));
+  if (request.headers.has('If-Modified-Since')) headers.set('If-Modified-Since', request.headers.get('If-Modified-Since'));
+
+  let upstream;
+  try {
+    upstream = await fetch(target, { method: request.method === 'HEAD' ? 'HEAD' : 'GET', headers: headers, redirect: 'follow' });
+  } catch (err) {
+    return json({ error: 'No se pudo conectar con el servidor de video.', details: err.message }, 502);
+  }
+
+  const finalUrl = upstream.url || target;
+  const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+  const isHls = /mpegurl/i.test(contentType) || /\.m3u8(?:$|\?)/i.test(finalUrl);
+
+  if (request.method !== 'HEAD' && isHls && upstream.ok) {
+    const text = await upstream.text();
+    const rewritten = await rewriteM3U8(text, finalUrl, url.origin, env);
+    return new Response(rewritten, {
+      status: upstream.status,
+      headers: {
+        'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+        'Cache-Control': 'no-store'
+      }
+    });
+  }
+
+  const out = new Headers();
+  out.set('Access-Control-Allow-Origin', '*');
+  out.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  out.set('Access-Control-Allow-Headers', '*');
+  const copy = ['content-type','content-length','content-range','accept-ranges','cache-control','etag','last-modified'];
+  for (let i = 0; i < copy.length; i++) {
+    const value = upstream.headers.get(copy[i]);
+    if (value) out.set(copy[i], value);
+  }
+  return new Response(request.method === 'HEAD' ? null : upstream.body, { status: upstream.status, headers: out });
+}
+
+async function rewriteM3U8(text, baseUrl, origin, env) {
+  const lines = String(text || '').split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) { out.push(line); continue; }
+    if (line.charAt(0) === '#') {
+      out.push(await rewriteTagUris(line, baseUrl, origin, env));
+      continue;
+    }
+    try {
+      const abs = new URL(line.trim(), baseUrl).toString();
+      out.push(await makeProxyUrl(abs, origin, env));
+    } catch (_) {
+      out.push(line);
+    }
+  }
+  return out.join('\n');
+}
+
+async function rewriteTagUris(line, baseUrl, origin, env) {
+  const re = /URI="([^"]+)"/g;
+  let result = '';
+  let last = 0;
+  let match;
+  while ((match = re.exec(line))) {
+    result += line.slice(last, match.index);
+    let replacement = match[0];
+    try {
+      const abs = new URL(match[1], baseUrl).toString();
+      replacement = 'URI="' + await makeProxyUrl(abs, origin, env) + '"';
+    } catch (_) {}
+    result += replacement;
+    last = re.lastIndex;
+  }
+  return result + line.slice(last);
+}
+
+async function makeProxyUrl(target, origin, env) {
+  if (!isSafeStreamUrl(target)) throw new Error('URL de stream no válida.');
+  const secret = String(env.STREAM_PROXY_SECRET || env.TMDB_API_KEY || '');
+  if (!secret) throw new Error('Falta secreto para el proxy de stream.');
+  const exp = Math.floor(Date.now() / 1000) + 1200;
+  const sig = await signMessage(exp + '\n' + target, secret);
+  const q = new URLSearchParams();
+  q.set('action', 'stream');
+  q.set('stream_url', target);
+  q.set('exp', String(exp));
+  q.set('sig', sig);
+  return origin + '/?' + q.toString();
+}
+
+function isSafeStreamUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch (_) { return false; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  if (u.username || u.password) return false;
+  const host = u.hostname.toLowerCase();
+  if (!host || host === 'localhost' || host.endsWith('.local')) return false;
+  if (host === '::1' || host === '[::1]' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:')) return false;
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]);
+    if (a === 10 || a === 127 || a === 0 || a >= 224) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+  }
+  return true;
+}
+
+async function signMessage(message, secret) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return bytesToHex(new Uint8Array(sig));
+}
+
+async function verifySignature(message, signatureHex, secret) {
+  if (!/^[0-9a-fA-F]{64}$/.test(signatureHex)) return false;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+  return crypto.subtle.verify('HMAC', key, hexToBytes(signatureHex), new TextEncoder().encode(message));
+}
+
+function bytesToHex(bytes) {
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0');
   return out;
 }
-function normalizeStream(v) {
-  if (typeof v === 'string') return /^https?:\/\//i.test(v) ? { url: v, format: inferFormat(v), label: inferFormat(v).toUpperCase() } : null;
-  if (!v || typeof v !== 'object' || typeof v.url !== 'string' || !/^https?:\/\//i.test(v.url)) return null;
-  return { url: v.url, format: v.format || inferFormat(v.url), label: v.label || String(v.format || inferFormat(v.url)).toUpperCase() };
+
+function hexToBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
 }
-function inferFormat(value) { return /\.m3u8(?:$|\?)/i.test(value || '') ? 'hls' : 'mp4'; }
-function json(data, status = 200) { return new Response(JSON.stringify(data), { status, headers: corsHeaders() }); }
-function corsHeaders() { return { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS', 'Access-Control-Allow-Headers': '*' }; }
+
+function inferFormat(value) {
+  return /\.m3u8(?:$|\?)/i.test(value || '') ? 'hls' : 'mp4';
+}
+
+function httpError(message, status) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+async function safeJson(response) {
+  try { return await response.json(); } catch (_) { return {}; }
+}
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), { status: status, headers: corsHeaders() });
+}
+
+function corsHeaders() {
+  return {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+    'Access-Control-Allow-Headers': '*'
+  };
+}
