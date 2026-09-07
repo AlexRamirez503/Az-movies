@@ -1,9 +1,9 @@
 name = "az-movies"
-main = "router-v6.js"
+main = "router-v7.js"
 compatibility_date = "2026-09-07"
 keep_vars = true
-# TMDB en worker.js. NSR en router-v6.js. El payload de playback expone servidores y formatos al reproductor.
-# NSR_API_TOKEN debe configurarse como secreto en Cloudflare.
+# TMDB en worker.js. NSR usa exactamente el flujo original sources -> resolve en router-v7.js.
+# Solo TMDB_API_KEY es obligatoria aquí; router-v7 no agrega autenticación extra a NSR.
 
 [secrets]
-required = ["TMDB_API_KEY", "NSR_API_TOKEN"]
+required = ["TMDB_API_KEY"]
