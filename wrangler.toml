@@ -1,9 +1,9 @@
 name = "az-movies"
-main = "router-v7.js"
+main = "router-v8.js"
 compatibility_date = "2026-09-07"
 keep_vars = true
-# TMDB en worker.js. NSR usa exactamente el flujo original sources -> resolve en router-v7.js.
-# Solo TMDB_API_KEY es obligatoria aquí; router-v7 no agrega autenticación extra a NSR.
+# TMDB en worker.js. Servidores y formatos vienen del bridge que ya devuelve servidores_disponibles + streams.
+# Solo TMDB_API_KEY es obligatoria aquí.
 
 [secrets]
 required = ["TMDB_API_KEY"]
