@@ -1,8 +1,8 @@
 name = "az-movies"
-main = "worker.js"
+main = "router.js"
 compatibility_date = "2026-09-07"
 keep_vars = true
-# Player UI: servidor + formato + MP4/HLS
+# La interfaz sigue en worker.js; router.js corrige descubrimiento/resolución NSR.
 
 [secrets]
 required = ["TMDB_API_KEY"]
