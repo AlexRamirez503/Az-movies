@@ -1,8 +1,8 @@
 name = "az-movies"
-main = "router-v2.js"
+main = "router-v3.js"
 compatibility_date = "2026-09-07"
 keep_vars = true
-# La interfaz sigue en worker.js; router-v2.js corrige NSR y mantiene todos los servidores.
+# La interfaz sigue en worker.js. router-v3.js adapta la respuesta del bridge NSR al reproductor.
 
 [secrets]
-required = ["TMDB_API_KEY", "NSR_API_TOKEN"]
+required = ["TMDB_API_KEY"]
